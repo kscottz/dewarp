@@ -56,11 +56,15 @@ def unwarp(img,xmap,ymap):
     result = Image(output,cv2image=True)
     return result
 
+def postCrop(img,threshold=10):
+    return img.crop(img.width*0.2,img.height*0.1,img.width*.6,img.height*0.8)
 
+doPostCrop = True
 img = Image('fisheye1.jpg')
-sections = spliceImg(img)
+sections = spliceImg(img,not doPostCrop)
 temp = sections[0]
-
+# we may want to make a new map per image for better
+# results in the long run
 Ws = temp.width
 Hs = temp.height
 Wd = temp.width*(4.0/3.0)
@@ -72,9 +76,11 @@ defished = []
 
 for s,idx  in zip(sections,range(0,len(sections))):
     result = unwarp(s,mapx,mapy)
+    if(doPostCrop):
+        result = postCrop(result)
     result = result
     temp = result.sideBySide(s)
     temp.save("View{0}.png".format(idx))
     result.save("DeWarp{0}.png".format(idx))
     temp.show()
-    time.sleep(3)
+    time.sleep(1)
