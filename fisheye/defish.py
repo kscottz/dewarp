@@ -8,7 +8,7 @@ def spliceImg(img):
     retVal = []
     for i in range(0,4):
         temp = img.crop(section*i,0,section,img.height)
-        mask = temp.threshold(10)
+        mask = temp.threshold(20)
         b = temp.findBlobsFromMask(mask)
         retVal.append(b[-1].hullImage())
     return retVal
@@ -16,13 +16,15 @@ def spliceImg(img):
 def buildMap(Ws,Hs,Wd,Hd):
     map_x = np.zeros((Hd,Wd),np.float32)
     map_y = np.zeros((Hd,Wd),np.float32)
-    fov = 1.0*np.pi
+    vfov = (150.0/180.0)*np.pi
+    hfov = (150.0/180.0)*np.pi
+
     count = 0
     for y in range(0,int(Hd-1)):
         for x in range(0,int(Wd-1)):
             count = count + 1
-            phi = fov*((float(x)/float(Wd)))
-            theta = fov*((float(y)/float(Hd)))
+            phi = vfov*((float(x)/float(Wd)))
+            theta = hfov*((float(y)/float(Hd)))
             yp = (np.sin(theta)*np.sin(phi)+1.0)/2.0#
             xp = (np.sin(theta)*np.cos(phi)+1.0)/2.0
             zp = (np.cos(theta)+1.0)/2.0# 
@@ -45,7 +47,7 @@ temp = sections[0]
 
 Ws = temp.width
 Hs = temp.height
-Wd = temp.width
+Wd = temp.width*(4.0/3.0)
 Hd = temp.height
 print "BUILDING MAP"
 mapx,mapy = buildMap(Ws,Hs,Wd,Hd)
@@ -54,6 +56,7 @@ defished = []
 
 for s,idx  in zip(sections,range(0,len(sections))):
     result = unwarp(s,mapx,mapy)
+    result = result
     temp = result.sideBySide(s)
     temp.save("View{0}.png".format(idx))
     result.save("DeWarp{0}.png".format(idx))
