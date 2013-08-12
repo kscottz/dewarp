@@ -3,36 +3,52 @@ import cv2
 import numpy as np
 import time
 
-def spliceImg(img):
+def spliceImg(img,doCrop=False):
     section = img.width/4;
     retVal = []
     for i in range(0,4):
         temp = img.crop(section*i,0,section,img.height)
-        mask = temp.threshold(20)
-        b = temp.findBlobsFromMask(mask)
-        retVal.append(b[-1].hullImage())
+        if( doCrop ):
+            mask = temp.threshold(20)
+            b = temp.findBlobsFromMask(mask)
+            temp = b[-1].hullImage()
+            m = np.max([temp.width,temp.height])
+            temp = temp.resize(m,m)
+        retVal.append(temp)
     return retVal
 
-def buildMap(Ws,Hs,Wd,Hd):
+def buildMap(Ws,Hs,Wd,Hd,hfovd=160.0,vfovd=160.0):
     map_x = np.zeros((Hd,Wd),np.float32)
     map_y = np.zeros((Hd,Wd),np.float32)
-    vfov = (150.0/180.0)*np.pi
-    hfov = (150.0/180.0)*np.pi
-
+    vfov = (vfovd/180.0)*np.pi
+    hfov = (hfovd/180.0)*np.pi
+    vstart = ((180.0-vfovd)/180.00)*np.pi/2.0
+    hstart = ((180.0-hfovd)/180.00)*np.pi/2.0
     count = 0
-    for y in range(0,int(Hd-1)):
-        for x in range(0,int(Wd-1)):
+    # need to scale to changed range from our
+    # smaller cirlce traced by the fov
+    xmax = np.sin(np.pi/2.0)*np.cos(vstart)
+    xmin = np.sin(np.pi/2.0)*np.cos(vstart+vfov)
+    xscale = xmax-xmin
+    xoff = xscale/2.0
+    zmax = np.cos(hstart)
+    zmin = np.cos(hfov+hstart)
+    zscale = zmax-zmin
+    zoff = zscale/2.0
+    
+    for y in range(0,int(Hd)):
+        for x in range(0,int(Wd)):
             count = count + 1
-            phi = vfov*((float(x)/float(Wd)))
-            theta = hfov*((float(y)/float(Hd)))
-            yp = (np.sin(theta)*np.sin(phi)+1.0)/2.0#
-            xp = (np.sin(theta)*np.cos(phi)+1.0)/2.0
-            zp = (np.cos(theta)+1.0)/2.0# 
+            phi = vstart+(vfov*((float(x)/float(Wd))))
+            theta = hstart+(hfov*((float(y)/float(Hd))))
+            xp = ((np.sin(theta)*np.cos(phi))+xoff)/zscale#
+            zp = ((np.cos(theta))+zoff)/zscale#
             xS = Ws-(xp*Ws)
             yS = Hs-(zp*Hs)
             map_x.itemset((y,x),int(xS))
             map_y.itemset((y,x),int(yS))
-        
+
+
     return map_x, map_y
 
 def unwarp(img,xmap,ymap):
