@@ -59,6 +59,60 @@ def unwarp(img,xmap,ymap):
 def postCrop(img,threshold=10):
     return img.crop(img.width*0.2,img.height*0.1,img.width*.6,img.height*0.8)
 
+
+def findHomography(img,template,quality=400.00,minDist=0.15,minMatch=0.5):
+    skp,sd = img._getRawKeypoints(quality)
+    tkp,td = template._getRawKeypoints(quality)
+    if( skp == None or tkp == None ):
+        warnings.warn("I didn't get any keypoints. Image might be too uniform or blurry." )
+        return None
+
+    template_points = float(td.shape[0])
+    sample_points = float(sd.shape[0])
+    magic_ratio = 1.00
+    if( sample_points > template_points ):
+        magic_ratio = float(sd.shape[0])/float(td.shape[0])
+
+    idx,dist = img._getFLANNMatches(sd,td) # match our keypoint descriptors
+    p = dist[:,0]
+    result = p*magic_ratio < minDist #, = np.where( p*magic_ratio < minDist )
+    pr = result.shape[0]/float(dist.shape[0])
+
+    if( pr > minMatch and len(result)>4 ): # if more than minMatch % matches we go ahead and get the data
+        #FIXME this code computes the "correct" homography
+        lhs = []
+        rhs = []
+        for i in range(0,len(idx)):
+            if( result[i] ):
+                lhs.append((tkp[i].pt[1], tkp[i].pt[0]))             #FIXME note index order
+                rhs.append((skp[idx[i]].pt[0], skp[idx[i]].pt[1]))   #FIXME note index order
+
+        rhs_pt = np.array(rhs)
+        lhs_pt = np.array(lhs)
+
+        homography,mask = cv2.findHomography(lhs_pt,rhs_pt,cv2.RANSAC, ransacReprojThreshold=1.0 )
+        return (homography, mask)
+    else:
+        return None
+    
+def doHomoMapping(img1,img2):
+
+    img1 = img1.embiggen(size=(img1.width*2,img1.height*2))
+    img2 = img2.embiggen(size=(img2.width*2,img2.height*2))
+    w2,h2 = img2.size()
+    H, mask = findHomography(img1,img2)
+    aligned_img2 = img2.transformPerspective(H)
+    img2_array = np.array(img2.getMatrix())
+    aligned_array2 = cv2.warpPerspective(src = img2_array,
+                                         M = H,
+                                         dsize = (h2,w2),
+                                         flags = cv2.INTER_CUBIC)  
+
+    print H
+    aligned_img2 = Image(aligned_array2)
+    overlay_img = aligned_img2.toBGR().blit(img1,alpha=0.2)  #overlay   
+    return overlay_img
+
 doPostCrop = True
 img = Image('fisheye1.jpg')
 sections = spliceImg(img,not doPostCrop)
@@ -78,9 +132,20 @@ for s,idx  in zip(sections,range(0,len(sections))):
     result = unwarp(s,mapx,mapy)
     if(doPostCrop):
         result = postCrop(result)
-    result = result
+#    result = result.edges()
+    defished.append(result)
     temp = result.sideBySide(s)
     temp.save("View{0}.png".format(idx))
     result.save("DeWarp{0}.png".format(idx))
     temp.show()
     time.sleep(1)
+
+hlist = []
+for i in range(0,len(defished)-1):
+    derp = doHomoMapping(defished[i],defished[i+1])
+    derp.show()
+    derp.save('Match{0}.png'.format(i))
+    time.sleep(10)
+
+
+         
