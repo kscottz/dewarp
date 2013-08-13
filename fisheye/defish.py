@@ -1,10 +1,13 @@
+#!/usr/bin/python
+
+import sys, getopt
 from SimpleCV import Display, Image, Color
 import cv2
-import cv
 import numpy as np
 import time
 
 def spliceImg(img,doCrop=False):
+    # Cut the input image into four chunks and return the results
     section = img.width/4;
     retVal = []
     for i in range(0,4):
@@ -19,6 +22,7 @@ def spliceImg(img,doCrop=False):
     return retVal
 
 def buildMap(Ws,Hs,Wd,Hd,hfovd=160.0,vfovd=160.0):
+    # Build the fisheye mapping
     map_x = np.zeros((Hd,Wd),np.float32)
     map_y = np.zeros((Hd,Wd),np.float32)
     vfov = (vfovd/180.0)*np.pi
@@ -36,7 +40,9 @@ def buildMap(Ws,Hs,Wd,Hd,hfovd=160.0,vfovd=160.0):
     zmin = np.cos(hfov+hstart)
     zscale = zmax-zmin
     zoff = zscale/2.0
-    
+    # Fill in the map, this is slow but
+    # we could probably speed it up
+    # since we only calc it once, whatever
     for y in range(0,int(Hd)):
         for x in range(0,int(Wd)):
             count = count + 1
@@ -53,15 +59,20 @@ def buildMap(Ws,Hs,Wd,Hd,hfovd=160.0,vfovd=160.0):
     return map_x, map_y
 
 def unwarp(img,xmap,ymap):
+    # apply the unwarping map to our image
     output = cv2.remap(img.getNumpyCv2(),xmap,ymap,cv2.INTER_LINEAR)
     result = Image(output,cv2image=True)
     return result
 
 def postCrop(img,threshold=10):
+    # Crop the image after dewarping
     return img.crop(img.width*0.2,img.height*0.1,img.width*.6,img.height*0.8)
 
 
 def findHomography(img,template,quality=500.00,minDist=0.2,minMatch=0.4):
+    # cribbed from SimpleCV, the homography sucks for this
+    # just use the median of the x offset of the keypoint correspondences
+    # to determine how to align the image
     skp,sd = img._getRawKeypoints(quality)
     tkp,td = template._getRawKeypoints(quality)
     if( skp == None or tkp == None ):
@@ -76,7 +87,7 @@ def findHomography(img,template,quality=500.00,minDist=0.2,minMatch=0.4):
 
     idx,dist = img._getFLANNMatches(sd,td) # match our keypoint descriptors
     p = dist[:,0]
-    result = p*magic_ratio < minDist #, = np.where( p*magic_ratio < minDist )
+    result = p*magic_ratio < minDist 
     pr = result.shape[0]/float(dist.shape[0])
 
     if( pr > minMatch and len(result)>4 ): # if more than minMatch % matches we go ahead and get the data
@@ -97,78 +108,101 @@ def findHomography(img,template,quality=500.00,minDist=0.2,minMatch=0.4):
     else:
         return None
     
-def doHomoMapping(img1,img2):
-
-    #img1 = img1.embiggen(size=(img1.width*2,img1.height*2))
-    #img2 = img2.embiggen(size=(img2.width*2,img2.height*2))
-    w2,h2 = img2.size()
-    H, M, offset = findHomography(img1,img2)
-    return offset
-#    img2_array = np.array(img2.getMatrix())    
-#    aligned_array2 = cv2.warpPerspective(src = img2_array,
-#                                         M = H,
-#                                         dsize = (h2,w2),
-#                                         flags = cv2.INTER_CUBIC)  
-
-#    print H
-#    aligned_img2 = Image(aligned_array2)
-#    overlay_img = aligned_img2.toRGB().blit(img1,alpha=0.5)  #overlay   
-#    return overlay_img
-
-doPostCrop = True
-img = Image('fisheye2.jpg')
-sections = spliceImg(img,not doPostCrop)
-temp = sections[0]
-# we may want to make a new map per image for better
-# results in the long run
-Ws = temp.width
-Hs = temp.height
-Wd = temp.width*(4.0/3.0)
-Hd = temp.height
-print "BUILDING MAP"
-mapx,mapy = buildMap(Ws,Hs,Wd,Hd)
-print "MAP DONE"
-defished = []
-
-for s,idx  in zip(sections,range(0,len(sections))):
-    result = unwarp(s,mapx,mapy)
-    if(doPostCrop):
-        result = postCrop(result)
-#    result = result.edges()
-    defished.append(result)
-    temp = result.sideBySide(s)
-    temp.save("View{0}.png".format(idx))
-    result.save("DeWarp{0}.png".format(idx))
-    temp.show()
-    time.sleep(1)
-
-
-offsets = []
-finalWidth = defished[0].width
-for i in range(0,len(defished)-1):
-    offset = doHomoMapping(defished[i],defished[i+1])
-    dfw = defished[i+1].width
-    offsets.append(offset)
-    finalWidth += int(dfw-offset[0])
-
-print finalWidth
-final = Image((finalWidth,defished[0].height))
-final = final.blit(defished[0],pos=(0,0))
-xs = 0
-for i in range(0,len(defished)-1):
-    w = defished[i+1].width
-    h = defished[i+1].height
+def constructMask(w,h,offset,expf=1.2):
+    # Create an alpha blur on the left followed by white
+    # using some exponential value to get better results
     mask = Image((w,h))
-    mask.drawRectangle(0,0,offsets[i][0]/2,h,color=(64,64,64),width=-1)
-    mask.drawRectangle(offsets[i][0]/2,0,offsets[i][0]/2,h,color=(192,192,192),width=-1)
-    mask.drawRectangle(offsets[i][0],0,w-offsets[i][0],h,color=(255,255,255),width=-1)
+    offset = int(offset)
+    for i in range(0,offset):
+        factor =np.clip((float(i)**expf)/float(offset),0.0,1.0) 
+        c = int(factor*255.0)
+        #this is oddness in slice, need to submit bug report
+        mask[i:i+1,0:h] = (c,c,c)
+
+    mask.drawRectangle(offset,0,w-offset,h,color=(255,255,255),width=-1)
     mask = mask.applyLayers()
-    xs += int(w-offsets[i][0])
-    final = final.blit(defished[i+1],pos=(xs,0),alphaMask=mask)
-    final.show()
-    time.sleep(3)
+    return mask
     
-final.show()
-final.save('final.png')
-time.sleep(10)
+def buildPano(defished):
+    # Build the panoram from the defisheye images
+    offsets = []
+    finalWidth = defished[0].width
+    # Get the offsets and calculte the final size
+    for i in range(0,len(defished)-1):
+        H, M, offset = findHomography(defished[i],defished[i+1])
+        dfw = defished[i+1].width
+        offsets.append(offset)
+        finalWidth += int(dfw-offset[0])
+
+    final = Image((finalWidth,defished[0].height))
+    final = final.blit(defished[0],pos=(0,0))
+    xs = 0
+    # blit subsequent images into the final image
+    for i in range(0,len(defished)-1):
+        w = defished[i+1].width
+        h = defished[i+1].height
+        mask = constructMask(w,h,offsets[i][0])
+        xs += int(w-offsets[i][0])
+        final = final.blit(defished[i+1],pos=(xs,0),alphaMask=mask)
+    return final
+
+
+def main(argv):
+    inputfile = ''
+    outputdir = './'
+    try:
+        opts, args = getopt.getopt(argv,"hi:o:",["ifile=","ofile="])
+    except getopt.GetoptError:
+        print 'defish.py -i <inputfile> -o <outputdir>'
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-h':
+            print 'test.py -i <inputfile> -o <outputdir>'
+            sys.exit()
+        elif opt in ("-i", "--ifile"):
+            inputfile = arg
+        elif opt in ("-o", "--ofile"):
+            outputdir = arg
+    print 'Input file is: ', inputfile
+    print 'Output Dir is: ', outputdir
+    doPostCrop = True
+    img = Image(inputfile)
+    sections = spliceImg(img,not doPostCrop)
+    temp = sections[0]
+    # we may want to make a new map per image for better
+    # results in the long run
+    # You can change these parameters to get different sized
+    # outputs
+    Ws = temp.width
+    Hs = temp.height
+    Wd = temp.width*(4.0/3.0)
+    Hd = temp.height
+    print "BUILDING MAP..."
+    mapx,mapy = buildMap(Ws,Hs,Wd,Hd)
+    print "MAP DONE"
+    defished = []
+    # do our dewarping and save/show the results
+    for s,idx  in zip(sections,range(0,len(sections))):
+        result = unwarp(s,mapx,mapy)
+        if(doPostCrop):
+            result = postCrop(result)
+    #    result = result.edges()
+        defished.append(result)
+        temp = result.sideBySide(s)
+        temp.save("{0}View{1}.png".format(outputdir,idx))
+        result.save("{0}DeWarp{1}.png".format(outputdir,idx))
+        temp.show()
+        time.sleep(1)
+    # Build the pano 
+    final = buildPano(defished)
+    final.show()
+    final.save('{0}final.png'.format(outputdir))
+    time.sleep(10)
+
+
+
+if __name__ == "__main__":
+   main(sys.argv[1:])
+
+
          
