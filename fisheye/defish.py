@@ -1,5 +1,6 @@
 from SimpleCV import Display, Image, Color
 import cv2
+import cv
 import numpy as np
 import time
 
@@ -60,7 +61,7 @@ def postCrop(img,threshold=10):
     return img.crop(img.width*0.2,img.height*0.1,img.width*.6,img.height*0.8)
 
 
-def findHomography(img,template,quality=400.00,minDist=0.15,minMatch=0.5):
+def findHomography(img,template,quality=500.00,minDist=0.2,minMatch=0.4):
     skp,sd = img._getRawKeypoints(quality)
     tkp,td = template._getRawKeypoints(quality)
     if( skp == None or tkp == None ):
@@ -89,32 +90,33 @@ def findHomography(img,template,quality=400.00,minDist=0.15,minMatch=0.5):
 
         rhs_pt = np.array(rhs)
         lhs_pt = np.array(lhs)
-
-        homography,mask = cv2.findHomography(lhs_pt,rhs_pt,cv2.RANSAC, ransacReprojThreshold=1.0 )
-        return (homography, mask)
+        xm = np.median(rhs_pt[:,1]-lhs_pt[:,1])
+        ym = np.median(rhs_pt[:,0]-lhs_pt[:,0])
+        homography,mask = cv2.findHomography(lhs_pt,rhs_pt,cv2.RANSAC, ransacReprojThreshold=1.1 )
+        return (homography,mask, (xm,ym))
     else:
         return None
     
 def doHomoMapping(img1,img2):
 
-    img1 = img1.embiggen(size=(img1.width*2,img1.height*2))
-    img2 = img2.embiggen(size=(img2.width*2,img2.height*2))
+    #img1 = img1.embiggen(size=(img1.width*2,img1.height*2))
+    #img2 = img2.embiggen(size=(img2.width*2,img2.height*2))
     w2,h2 = img2.size()
-    H, mask = findHomography(img1,img2)
-    aligned_img2 = img2.transformPerspective(H)
-    img2_array = np.array(img2.getMatrix())
-    aligned_array2 = cv2.warpPerspective(src = img2_array,
-                                         M = H,
-                                         dsize = (h2,w2),
-                                         flags = cv2.INTER_CUBIC)  
+    H, M, offset = findHomography(img1,img2)
+    return offset
+#    img2_array = np.array(img2.getMatrix())    
+#    aligned_array2 = cv2.warpPerspective(src = img2_array,
+#                                         M = H,
+#                                         dsize = (h2,w2),
+#                                         flags = cv2.INTER_CUBIC)  
 
-    print H
-    aligned_img2 = Image(aligned_array2)
-    overlay_img = aligned_img2.toBGR().blit(img1,alpha=0.2)  #overlay   
-    return overlay_img
+#    print H
+#    aligned_img2 = Image(aligned_array2)
+#    overlay_img = aligned_img2.toRGB().blit(img1,alpha=0.5)  #overlay   
+#    return overlay_img
 
 doPostCrop = True
-img = Image('fisheye1.jpg')
+img = Image('fisheye2.jpg')
 sections = spliceImg(img,not doPostCrop)
 temp = sections[0]
 # we may want to make a new map per image for better
@@ -140,12 +142,33 @@ for s,idx  in zip(sections,range(0,len(sections))):
     temp.show()
     time.sleep(1)
 
-hlist = []
+
+offsets = []
+finalWidth = defished[0].width
 for i in range(0,len(defished)-1):
-    derp = doHomoMapping(defished[i],defished[i+1])
-    derp.show()
-    derp.save('Match{0}.png'.format(i))
-    time.sleep(10)
+    offset = doHomoMapping(defished[i],defished[i+1])
+    dfw = defished[i+1].width
+    offsets.append(offset)
+    finalWidth += int(dfw-offset[0])
 
-
+print finalWidth
+final = Image((finalWidth,defished[0].height))
+final = final.blit(defished[0],pos=(0,0))
+xs = 0
+for i in range(0,len(defished)-1):
+    w = defished[i+1].width
+    h = defished[i+1].height
+    mask = Image((w,h))
+    mask.drawRectangle(0,0,offsets[i][0]/2,h,color=(64,64,64),width=-1)
+    mask.drawRectangle(offsets[i][0]/2,0,offsets[i][0]/2,h,color=(192,192,192),width=-1)
+    mask.drawRectangle(offsets[i][0],0,w-offsets[i][0],h,color=(255,255,255),width=-1)
+    mask = mask.applyLayers()
+    xs += int(w-offsets[i][0])
+    final = final.blit(defished[i+1],pos=(xs,0),alphaMask=mask)
+    final.show()
+    time.sleep(3)
+    
+final.show()
+final.save('final.png')
+time.sleep(10)
          
